@@ -4,6 +4,9 @@ __pycache__/
 
 # Generated vault files
 *.vault
+*.vault-wal
+*.vault-shm
+*.vault-journal
 
 # Reader sidecar files
 *.notes.json
