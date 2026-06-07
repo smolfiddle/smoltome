@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.mypy_cache/
+
+# Generated vault files
+*.vault
+
+# Reader sidecar files
+*.notes.json
+
+# OS files
+.DS_Store
+Thumbs.db
