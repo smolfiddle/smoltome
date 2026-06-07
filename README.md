@@ -1,7 +1,3 @@
-Here is the fully revised README. The light-novel optimization is woven into the feature descriptions and use-case contexts rather than shouted in the headline.
-
----
-
 # smoltome
 
 > **Single-file EPUB converter + zero-dependency web reader.**
