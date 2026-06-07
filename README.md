@@ -1,7 +1,7 @@
 # smoltome
 
-> **Single-file EPUB converter + zero-dependency web reader.**
-> Turn a folder of ebooks into a deduplicated, compressed SQLite vault and read them in a browser with highlighting, bookmarks, infinite scroll, and 8 themes—no `pip install` required.
+> **Single-file EPUB vault + web reader for Japanese light novels.**
+> Turn a folder of LN EPUBs into a deduplicated, compressed SQLite vault and binge-read in your browser—infinite scroll, highlights, bookmarks, 8 themes. Also works great with manga, web fiction, and any EPUB.
 
 ---
 
@@ -30,14 +30,14 @@
 
 ## Overview
 
-`smoltome.py` is a self-contained Python 3 script that does two things:
+`smoltome.py` is a self-contained Python 3 script built for reading Japanese light novels:
 
 1. **Ingests** EPUB files into a `.vault` archive—an SQLite-based, content-addressed storage layer with adaptive compression and deduplication.
 2. **Serves** those books over HTTP with a fully embedded single-page reader (HTML/CSS/JS baked into the Python file).
 
-It works out of the box with standard EPUBs, but it is particularly pleasant for long, illustration-heavy serial fiction—light novels, web-fiction collections, and translated EPUBs that mix prose with inline images. The extraction pipeline preserves cover order, chapter spine sequence, and embedded illustrations exactly as they appear in the source file.
+Built specifically for LN collectors: handles cover art, inline illustrations, multi-volume series, and translated EPUBs that mix prose with images. The extraction pipeline preserves chapter spine order, cover position, and embedded illustrations exactly as they appear in the source file. CJK search tokenization works out of the box.
 
-There are no external dependencies. The entire stack fits in one file and uses only the standard library. Requires Python 3.6+.
+Also works with manga, web fiction, textbooks, or any standard EPUB. No external dependencies. Requires Python 3.6+.
 
 ---
 
@@ -46,18 +46,20 @@ There are no external dependencies. The entire stack fits in one file and uses o
 ### Converter
 
 - **EPUB → Markdown** extraction with OPF spine ordering and metadata parsing.
-- **Content-Defined Chunking (CDC)** via gear-hash rolling window (64 KB min / 256 KB target / 1 MB max) so small edits to a file don’t invalidate downstream deduplication.
+- **Cover detection** for EPUB 2/3 `<meta name="cover">` tags, with fallback to filename matching (handles `Cover.jpg`, `cover.png`, etc. common in fan-translated LNs).
+- **Content-Defined Chunking (CDC)** via gear-hash rolling window (64 KB min / 256 KB target / 1 MB max) so small edits to a file don't invalidate downstream deduplication.
 - **Adaptive compression**: samples Shannon entropy to decide whether zlib level-9 will actually save space; high-entropy data (already-compressed images, encrypted blobs) is stored raw.
-- **BLAKE2b deduplication** across all books—identical chunks are stored once.
+- **BLAKE2b deduplication** across all books—identical chunks are stored once. Shared cover art or insert illustrations across volumes stored only once.
 - **WORM semantics**: immutable assets; re-converting the same filename updates the catalog but does not duplicate chunks.
 - **Global catalog merging**: incremental updates preserve previously-ingested books.
+- **Full-text search** with CJK tokenization (Hiragana, Katakana, Unified Ideographs as unigrams).
 - **Password protection**: PBKDF2-HMAC-SHA256 with per-vault salt.
 
 ### Reader
 
 - **Zero-dependency HTTP server** (`ThreadingHTTPServer`) with connection pooling and WAL-tuned SQLite.
 - **8 built-in themes**: default-light, default-dark, sepia, paper, solarised-light, solarised-dark, oled-black, high-contrast.
-- **Infinite scroll** or chapter-by-chapter paging—ideal for binge-reading multi-volume series.
+- **Infinite scroll** for binge-reading multi-volume series—chapters append as you scroll, no page breaks.
 - **Text highlights** in 4 colors with optional notes.
 - **Per-chapter bookmarks** with one-click save.
 - **Reading position** auto-persisted (chapter index + scroll offset).
@@ -311,10 +313,13 @@ Password-protected vaults require `Authorization: Basic` with any username and t
 The parser checks EPUB 2/3 `<meta name="cover">` tags, then falls back to the first image whose filename contains `cover`. Most fan-translated and retail light-novel EPUBs name their cover `Cover.jpg` or `cover.png`, so this catches them even when the OPF meta tag is missing.
 
 **Inline illustrations not showing**
-The reader rewrites relative `<img src="...">` paths to vault API paths automatically. If an image is missing, check that it was listed in the EPUB’s OPF manifest and that its MIME type starts with `image/`.
+The reader rewrites relative `<img src="...">` paths to vault API paths automatically. If an image is missing, check that it was listed in the EPUB's OPF manifest and that its MIME type starts with `image/`.
 
 **Converting the same book twice**
 The global catalog merges entries by `book_id`. Re-converting updates the catalog but reuses existing deduplicated chunks, so storage cost is minimal—useful when you re-download a corrected volume and want to replace the old copy in-place.
+
+**Multi-volume series**
+Each volume gets its own `book_id` derived from the filename. Re-converting one volume doesn't touch the others. Infinite scroll works per-book; for cross-volume reading, use the sidebar to switch.
 
 **Password prompt during convert**
 If the vault already has a password, the CLI will prompt up to 3 times. Use `--password` to provide it non-interactively.
