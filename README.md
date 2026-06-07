@@ -37,7 +37,7 @@
 
 It works out of the box with standard EPUBs, but it is particularly pleasant for long, illustration-heavy serial fiction—light novels, web-fiction collections, and translated EPUBs that mix prose with inline images. The extraction pipeline preserves cover order, chapter spine sequence, and embedded illustrations exactly as they appear in the source file.
 
-There are no external dependencies. The entire stack fits in one file and uses only the standard library.
+There are no external dependencies. The entire stack fits in one file and uses only the standard library. Requires Python 3.6+.
 
 ---
 
@@ -145,6 +145,16 @@ python3 smoltome.py read --no-browser
 ```
 
 If the script is symlinked to `vault_reader`, it automatically runs the `read` subcommand.
+
+### Rebuilding Search Index
+
+```bash
+# Rebuild full-text search index for an existing vault
+python3 smoltome.py index --vault library.vault
+
+# With password
+python3 smoltome.py index --vault library.vault --password "secret"
+```
 
 ### Makefile Shortcuts
 
@@ -275,7 +285,7 @@ The reader communicates with the backend over a small REST API.
 | `GET`            | `/api/vault/{v}/book/{id}/catalog`          | Book metadata & chapter index |
 | `GET`            | `/api/vault/{v}/book/{id}/chapter/{file}`   | Raw Markdown chapter          |
 | `GET`            | `/api/vault/{v}/image/{book}/{file}`        | Image asset (cached 1 hr)     |
-| `GET`            | `/api/vault/{v}/search?q=...`               | Title/author search           |
+| `GET`            | `/api/vault/{v}/search?q=...`               | Title/author + full-text content search |
 | `GET` / `PUT`    | `/api/vault/{v}/settings`                   | Reader settings               |
 | `GET` / `PUT`    | `/api/vault/{v}/book/{id}/position`         | Reading position              |
 | `GET` / `POST`   | `/api/vault/{v}/book/{id}/bookmarks`        | List / create bookmarks       |
@@ -319,4 +329,4 @@ Because images are stored as deduplicated chunks, a series that reuses the same 
 
 ## License
 
-This project is provided as a single-file utility. See the source header for authorship and license terms.
+[MIT](LICENSE)
