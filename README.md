@@ -89,7 +89,7 @@ There are no external dependencies. The entire stack fits in one file and uses o
 
 ```bash
 # 1. Grab the script
-curl -O https://raw.githubusercontent.com/yourname/smoltome/main/smoltome.py
+curl -O https://raw.githubusercontent.com/smolfiddle/smoltome/main/smoltome.py
 chmod +x smoltome.py
 
 # 2. Convert all EPUBs in the current directory
