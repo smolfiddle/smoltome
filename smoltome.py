@@ -2962,15 +2962,15 @@ INDEX_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Vault Reader</title>
+<title>smoltome</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body class="theme-default-dark no-book">
-<noscript><p style="padding:2rem;text-align:center;">Vault Reader requires JavaScript.</p></noscript>
+<noscript><p style="padding:2rem;text-align:center;">smoltome requires JavaScript.</p></noscript>
 <div id="read-progress" class="progress-bar" style="width:0%"></div>
 <header class="topbar">
   <button id="sidebar-toggle" class="icon-btn" aria-label="Toggle sidebar">&#9776;</button>
-  <h1 id="app-title">Vault Reader</h1>
+  <h1 id="app-title">smoltome</h1>
   <input id="search" type="search" placeholder="Search books & chapter text…" autocomplete="off" spellcheck="false">
   <button id="open-settings" class="icon-btn" aria-label="Settings" title="Settings">&#9881;</button>
 </header>
@@ -4421,7 +4421,7 @@ INDEX_JS = r"""(function() {
     const ct = document.getElementById('content');
     const sb = document.getElementById('sidebar');
     sb.innerHTML = ''; sb.classList.remove('open');
-    document.getElementById('app-title').textContent = 'Vault Reader';
+    document.getElementById('app-title').textContent = 'smoltome';
     ct.className = '';
     ct.innerHTML = '<h2 style="margin-top:0;">Select a vault</h2>' +
       '<div class="vault-list">' + state.vaults.map(v => (
@@ -4451,7 +4451,7 @@ INDEX_JS = r"""(function() {
     const sb = document.getElementById('sidebar');
     const ct = document.getElementById('content');
     sb.classList.remove('open');
-    document.getElementById('app-title').textContent = 'Vault Reader';
+    document.getElementById('app-title').textContent = 'smoltome';
     sb.innerHTML = '<h3>Vault</h3><a class="active">' + escapeHtml(state.vault) + '</a>' +
                    '<h3>Books</h3>' + books.map(b =>
       '<a data-id="' + escapeHtml(b.book_id) + '">' + escapeHtml(b.title) + '</a>'
@@ -4490,7 +4490,7 @@ INDEX_JS = r"""(function() {
     const ct = document.getElementById('content');
     const sb = document.getElementById('sidebar');
     sb.classList.remove('open');
-    document.getElementById('app-title').textContent = 'Vault Reader';
+    document.getElementById('app-title').textContent = 'smoltome';
     sb.innerHTML = '<h3>Vault</h3><a class="active">' + escapeHtml(state.vault) + '</a>' +
                    '<h3>Books</h3>' + (data.books || []).map(b =>
       '<a data-id="' + escapeHtml(b.book_id) + '">' + escapeHtml(b.title) + '</a>'
@@ -4578,7 +4578,7 @@ INDEX_JS = r"""(function() {
     try {
       state.catalog = await api('/api/vault/' + encodeURIComponent(state.vault) +
                                 '/book/' + encodeURIComponent(bookId) + '/catalog');
-      document.getElementById('app-title').textContent = state.catalog.title || 'Vault Reader';
+      document.getElementById('app-title').textContent = state.catalog.title || 'smoltome';
       const pos = await loadPosition(bookId);
       renderReaderSidebar();
       if (state.catalog.chapters && state.catalog.chapters.length) {
