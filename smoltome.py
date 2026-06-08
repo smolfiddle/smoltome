@@ -4363,11 +4363,7 @@ INDEX_JS = r"""(function() {
           highlightActiveChapter();
           markReadChapters();
           const prog = document.getElementById('chapter-progress');
-          if (prog) {
-            const chInf = state.catalog.chapters[state.chapterIndex];
-            const ttl = (chInf && chInf.title) || ('Chapter ' + (state.chapterIndex + 1));
-            prog.textContent = ttl + '  \u00b7  ' + (state.chapterIndex + 1) + '/' + state.catalog.chapters.length;
-          }
+          if (prog) prog.textContent = (state.chapterIndex + 1) + '/' + state.catalog.chapters.length;
         }
         savePositionDebounced();
         updateProgressBar();
@@ -4476,9 +4472,8 @@ INDEX_JS = r"""(function() {
     if (state.chapterIndex === 0) prev.disabled = true;
     const next = el('button', { onclick: () => nextChapter() }, '\u2192');
     if (state.chapterIndex === state.catalog.chapters.length - 1) next.disabled = true;
-    const title = ch.title || ('Chapter ' + (state.chapterIndex + 1));
     const progressTxt = el('span', { id: 'chapter-progress' },
-      escapeHtml(title) + '  \u00b7  ' + (state.chapterIndex + 1) + '/' + state.catalog.chapters.length);
+      (state.chapterIndex + 1) + '/' + state.catalog.chapters.length);
     const bmBtn = el('button', { onclick: quickBookmark, title: 'Bookmark' }, '\u2606');
     bar.appendChild(prev); bar.appendChild(next);
     bar.appendChild(progressTxt); bar.appendChild(bmBtn);
