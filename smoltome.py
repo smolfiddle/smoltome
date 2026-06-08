@@ -2676,7 +2676,6 @@ DEFAULT_SETTINGS: Dict[str, object] = {
     "alignment":        "left",
     "max_width":        800,
     "paragraph_indent": 0,
-    "fading_edge":      0,
     "infinite_scroll":  1,
     "sidebar_position": "left",
 }
@@ -3175,17 +3174,6 @@ body.sidebar-right #sidebar {
 #content.reader hr { border: 0; border-top: 1px solid var(--border); margin: 2em 0; }
 #content.reader ul, #content.reader ol { padding-left: 1.4em; }
 
-/* Fading edge: gradient mask at top/bottom of the reader */
-#content.reader.fading-edge::before,
-#content.reader.fading-edge::after {
-  content: ""; position: sticky; left: 0; right: 0; height: 1.5em;
-  display: block; pointer-events: none; z-index: 1;
-  background: linear-gradient(var(--bg), transparent);
-}
-#content.reader.fading-edge::before { top: 0; margin-bottom: -1.5em; }
-#content.reader.fading-edge::after  { bottom: 0; margin-top: -1.5em;
-                                       background: linear-gradient(transparent, var(--bg)); }
-
 /* Infinite-scroll chapter dividers + sentinel */
 #reader-body.infinite .chapter-block { margin: 0; }
 .chapter-divider {
@@ -3492,7 +3480,7 @@ INDEX_JS = r"""(function() {
   const DEFAULT_SETTINGS = {
     theme: 'default-dark', font_family: 'system', font_size: 18,
     line_height: 1.6, margin: 1.5, alignment: 'left', max_width: 800,
-    paragraph_indent: 0, fading_edge: 0, infinite_scroll: 1,
+    paragraph_indent: 0, infinite_scroll: 1,
     sidebar_position: 'left',
   };
   const VALID_THEMES = ['default-light','default-dark','sepia','paper',
@@ -3696,7 +3684,6 @@ INDEX_JS = r"""(function() {
        select('alignment', [['left','Left'],['center','Center'],['right','Right'],['justify','Justify']], s.alignment)],
       ['Page width (px)',       slider('max_width', 500, 1400, 20, s.max_width, v => v + 'px')],
       ['Paragraph indent (em)', slider('paragraph_indent', 0, 4, 0.1, s.paragraph_indent, v => v.toFixed(1))],
-      ['Fading edge',           slider('fading_edge', 0, 1, 1, s.fading_edge, v => v ? 'on' : 'off')],
       ['Infinite scroll',       slider('infinite_scroll', 0, 1, 1, s.infinite_scroll, v => v ? 'on' : 'off')],
       ['Sidebar position',
        select('sidebar_position', [['left','Left'],['right','Right']], s.sidebar_position || 'left')],
@@ -3745,7 +3732,7 @@ INDEX_JS = r"""(function() {
     if (input.name === 'line_height' || input.name === 'margin' || input.name === 'paragraph_indent') {
       return parseFloat(input.value).toFixed(2).replace(/\.?0+$/, '');
     }
-    if (input.name === 'fading_edge' || input.name === 'infinite_scroll') {
+    if (input.name === 'infinite_scroll') {
       return parseInt(input.value, 10) ? 'on' : 'off';
     }
     return input.value;
@@ -4702,7 +4689,7 @@ INDEX_JS = r"""(function() {
                            '/chapter/' + encodeURIComponent(ch.file));
       let html = mdToHtml(md);
       html = rewriteImgSrcs(html);
-      ct.className = 'reader' + (state.settings && state.settings.fading_edge ? ' fading-edge' : '');
+      ct.className = 'reader';
       ct.innerHTML = '';
       ct.appendChild(buildReaderToolbar(ch));
       const body = el('div', { id: 'reader-body' });
@@ -4735,7 +4722,7 @@ INDEX_JS = r"""(function() {
     const ch = state.catalog.chapters[idx];
     state.currentChapter = ch.file;
     const ct = document.getElementById('content');
-    ct.className = 'reader' + (state.settings && state.settings.fading_edge ? ' fading-edge' : '');
+    ct.className = 'reader';
     ct.innerHTML = '';
     ct.appendChild(buildReaderToolbar(ch));
     const body = el('div', { id: 'reader-body', class: 'infinite' });
