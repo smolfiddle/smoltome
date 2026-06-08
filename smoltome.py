@@ -2050,9 +2050,9 @@ def _extract_chapters(
         stripped = markdown.strip()
         if not stripped:
             continue
-        # Skip cover-like pages: image-only or near-empty content.
-        if len(stripped) < 200 and re.fullmatch(r'!\[.*?\]\(.*?\)', stripped):
-            log.debug("  Skipping cover-like page: %s", href)
+        # Skip cover page (first spine entry) when it's a lone image.
+        if index == 1 and len(stripped) < 200 and re.fullmatch(r'!\[.*?\]\(.*?\)', stripped):
+            log.debug("  Skipping cover page: %s", href)
             continue
         base_name = re.sub(r"[^A-Za-z0-9._-]+", "_",
                            os.path.splitext(os.path.basename(member))[0]) or f"chapter{index}"
