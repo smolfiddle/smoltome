@@ -2973,7 +2973,6 @@ INDEX_HTML = r"""<!doctype html>
   <input id="search" type="search" placeholder="Search books & chapter text…" autocomplete="off" spellcheck="false">
   <button id="open-settings" class="icon-btn" aria-label="Settings" title="Settings">&#9881;</button>
 </header>
-<div id="sidebar-trigger"></div>
 <main id="app"></main>
 <script src="/script.js"></script>
 </body>
@@ -3075,25 +3074,6 @@ body { display: flex; flex-direction: column; min-height: 100vh; transition: bac
   z-index: 30;
   transition: width 0.15s linear;
 }
-.progress-bar::after {
-  content: ""; position: absolute; right: -2px; top: -1px;
-  width: 4px; height: 4px; border-radius: 50%;
-  background: var(--primary);
-  box-shadow: 0 0 6px 2px var(--primary);
-  animation: pulse 2s ease-in-out infinite;
-}
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-/* ─── Sidebar trigger strip ─────────────────────────────────────────── */
-#sidebar-trigger {
-  position: fixed; top: 0; left: 0; width: 8px; height: 100%;
-  z-index: 14;
-}
-body.sidebar-right #sidebar-trigger { left: auto; right: 0; }
-#sidebar-trigger:hover + main #sidebar,
-#sidebar:hover,
-body.sidebar-right #sidebar:hover { transform: translateX(0); }
-
 /* ─── Sidebar ───────────────────────────────────────────────────────── */
 main { flex: 1; display: flex; min-height: 0; margin-top: 49px; }
 #sidebar {
@@ -3107,6 +3087,7 @@ main { flex: 1; display: flex; min-height: 0; margin-top: 49px; }
   transform: translateX(calc(-100% - 8px));
   transition: transform 0.2s ease-out;
 }
+#sidebar:hover { transform: translateX(0); }
 body.sidebar-right #sidebar {
   left: auto; right: 8px;
   transform: translateX(calc(100% + 8px));
@@ -3406,7 +3387,6 @@ body.sidebar-right #sidebar {
   #sidebar-toggle, #open-settings { display: inline-block; }
   .topbar h1 { font-size: 0.95rem; }
   .topbar #search { width: 170px; font-size: 0.88rem; }
-  #sidebar-trigger { display: none; }
   #sidebar { position: fixed; top: 49px; bottom: 0; left: 0; right: auto;
              border-radius: 0; transform: translateX(-100%); transition: transform 0.18s ease-out; }
   #sidebar:hover { transform: translateX(0); }
@@ -3423,7 +3403,7 @@ body.sidebar-right #sidebar {
 
 /* ─── Zen mode ──────────────────────────────────────────────────────── */
 body.zen .topbar { transform: translateY(-100%); }
-body.zen #sidebar, body.zen #sidebar-trigger { display: none; }
+body.zen #sidebar { display: none; }
 body.zen #content .toolbar { display: none; }
 body.zen .ic-search { display: none; }
 body.zen .progress-bar { display: none; }
@@ -4060,43 +4040,6 @@ INDEX_JS = r"""(function() {
   }
 
   // ──────────────────────────────────────────────────────────────── //
-  //  Reading time estimate                                            //
-  // ──────────────────────────────────────────────────────────────── //
-  function updateReadingTime() {
-    const el = document.getElementById('reading-time');
-    if (!el || !state.catalog) return;
-    const totalWords = state.catalog.total_words || 0;
-    if (!totalWords) { el.textContent = ''; return; }
-    const chCount = state.catalog.chapters.length || 1;
-    const wordsPerChapter = totalWords / chCount;
-    let completedChapters = state.chapterIndex;
-    let chapterFrac = 0;
-    if (state.infiniteScroll) {
-      const info = activeChapterInfo();
-      completedChapters = info.idx;
-      const ct = document.getElementById('content');
-      const block = ct ? ct.querySelector('[data-chapter-idx="' + info.idx + '"]') : null;
-      const blockHeight = block ? block.offsetHeight : 1;
-      chapterFrac = Math.min(1, Math.max(0, info.local / Math.max(1, blockHeight)));
-    } else {
-      const ct = document.getElementById('content');
-      if (ct) {
-        const maxScroll = Math.max(1, ct.scrollHeight - ct.clientHeight);
-        chapterFrac = Math.min(1, Math.max(0, ct.scrollTop / maxScroll));
-      }
-    }
-    const wordsRead = (completedChapters + chapterFrac) * wordsPerChapter;
-    const wordsRemaining = Math.max(0, totalWords - wordsRead);
-    const minsRemaining = Math.ceil(wordsRemaining / 200);
-    let text = '';
-    if (minsRemaining <= 0) text = 'Finishing...';
-    else if (minsRemaining < 60) text = '~' + minsRemaining + ' min left';
-    else if (minsRemaining % 60 === 0) text = '~' + Math.floor(minsRemaining / 60) + ' hr left';
-    else text = '~' + Math.floor(minsRemaining / 60) + ' hr ' + (minsRemaining % 60) + ' min left';
-    el.textContent = text;
-  }
-
-  // ──────────────────────────────────────────────────────────────── //
   //  Topbar auto-hide                                                 //
   // ──────────────────────────────────────────────────────────────── //
   let idleTimer = null;
@@ -4130,26 +4073,6 @@ INDEX_JS = r"""(function() {
       el('button', { onclick: () => { savePositionNow(); clearReadingState(); renderBookList(state.books); } }, 'Back to library')
     );
     body.appendChild(card);
-  }
-
-  // ──────────────────────────────────────────────────────────────── //
-  //  Click-to-turn pages                                              //
-  // ──────────────────────────────────────────────────────────────── //
-  function bindClickToTurn() {
-    document.addEventListener('click', (e) => {
-      if (!isReader()) return;
-      const sidebarEl = document.getElementById('sidebar');
-      const sidebarOpen = sidebarEl && sidebarEl.matches(':hover');
-      if (e.target.closest('a, button, mark, input, textarea, img, .modal-overlay, .zoom-modal, .hl-popup')) return;
-      const vw = window.innerWidth;
-      const x = e.clientX;
-      const ct = document.getElementById('content');
-      if (!ct) return;
-      const pageH = Math.max(300, Math.round((ct.clientHeight || 600) * 0.85));
-      const pos = (state.settings && state.settings.sidebar_position === 'right') ? 'right' : 'left';
-      if (x < vw * 0.15 && pos !== 'left') { ct.scrollBy({ top: -pageH, behavior: 'smooth' }); return; }
-      if (x > vw * 0.85 && pos !== 'right') { ct.scrollBy({ top: pageH, behavior: 'smooth' }); return; }
-    });
   }
 
   // ──────────────────────────────────────────────────────────────── //
@@ -4702,9 +4625,8 @@ INDEX_JS = r"""(function() {
       if (typeof restoreScroll === 'number') ct.scrollTop = restoreScroll;
       else ct.scrollTop = 0;
       updateProgressBar();
-      updateReadingTime();
       if (state.scrollListener) ct.removeEventListener('scroll', state.scrollListener);
-      state.scrollListener = () => { savePositionDebounced(); updateProgressBar(); updateReadingTime(); resetIdleTimer(); };
+      state.scrollListener = () => { savePositionDebounced(); updateProgressBar(); resetIdleTimer(); };
       ct.addEventListener('scroll', state.scrollListener);
       window.addEventListener('beforeunload', savePositionNow);
       if (idx === state.catalog.chapters.length - 1) {
@@ -4741,7 +4663,6 @@ INDEX_JS = r"""(function() {
         ct.scrollTop = 0;
       }
       updateProgressBar();
-      updateReadingTime();
       if (state.scrollListener) ct.removeEventListener('scroll', state.scrollListener);
       state.scrollListener = () => {
         const info = activeChapterInfo();
@@ -4752,7 +4673,6 @@ INDEX_JS = r"""(function() {
         }
         savePositionDebounced();
         updateProgressBar();
-        updateReadingTime();
         resetIdleTimer();
       };
       ct.addEventListener('scroll', state.scrollListener);
@@ -4865,10 +4785,8 @@ INDEX_JS = r"""(function() {
     const title = el('span', { class: 'chapter-title' }, ch.title || ch.file);
     const right = el('span', { class: 'toolbar-right' });
     const progressTxt = el('span', null, 'Ch ' + (state.chapterIndex + 1) + ' / ' + state.catalog.chapters.length);
-    const timeEl = el('span', { id: 'reading-time' }, '');
     const bmBtn = el('button', { onclick: quickBookmark, title: 'Bookmark' }, '\u2606');
     right.appendChild(progressTxt);
-    right.appendChild(timeEl);
     right.appendChild(bmBtn);
     bar.appendChild(prev); bar.appendChild(next);
     bar.appendChild(title); bar.appendChild(right);
@@ -4918,7 +4836,7 @@ INDEX_JS = r"""(function() {
     buildShell();
     bindKeyboard(); bindGestures();
     bindSelectionPopup(); bindMarkClicks(); bindImageZoom();
-    bindClickToTurn(); bindIdleTimer();
+    bindIdleTimer();
     resetIdleTimer();
     try {
       const vaults = await api('/api/vaults');
