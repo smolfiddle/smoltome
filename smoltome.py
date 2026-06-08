@@ -2262,8 +2262,6 @@ ROUTES: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"^/api/vault/([^/]+)/book/([^/]+)/position$"),           "position"),
     (re.compile(r"^/api/vault/([^/]+)/book/([^/]+)/bookmarks$"),          "bookmarks"),
     (re.compile(r"^/api/vault/([^/]+)/book/([^/]+)/bookmarks/([^/]+)$"),  "bookmark_item"),
-    (re.compile(r"^/api/vault/([^/]+)/book/([^/]+)/highlights$"),         "highlights"),
-    (re.compile(r"^/api/vault/([^/]+)/book/([^/]+)/highlights/([^/]+)$"), "highlight_item"),
 ]
 
 
@@ -2586,62 +2584,6 @@ class ReaderHandler(BaseHTTPRequestHandler):
         self._send_error(405, "Method not allowed")
 
     # ------------------------------------------------------------------ #
-    # Route: /book/<id>/highlights (GET, POST)
-    # ------------------------------------------------------------------ #
-
-    def _route_highlights(self, method: str, name: str, book_id: str, query: str) -> None:
-        sc = self._sidecar(name)
-        if sc is None:
-            return
-        if method == "GET":
-            chapter = urllib.parse.parse_qs(query).get("chapter", [None])[0]
-            self._send_json(sc.list_highlights(book_id, chapter)); return
-        if method == "POST":
-            body    = self._read_body_json()
-            chapter = str(body.get("chapter", "")).strip()
-            try:
-                start = int(body.get("start", 0))
-                end   = int(body.get("end",   0))
-            except (TypeError, ValueError):
-                self._send_error(400, "start and end must be integers"); return
-            color   = str(body.get("color", "yellow"))
-            note    = str(body.get("note",  ""))
-            if not chapter or end <= start:
-                self._send_error(400, "chapter is required and end must be > start"); return
-            self._send_json(sc.add_highlight(book_id, chapter, start, end, color, note))
-            return
-        self._send_error(405, "Method not allowed")
-
-    # ------------------------------------------------------------------ #
-    # Route: /book/<id>/highlights/<id> (PUT, DELETE)
-    # ------------------------------------------------------------------ #
-
-    def _route_highlight_item(self, method: str, name: str, book_id: str,
-                              highlight_id: str, query: str) -> None:
-        sc = self._sidecar(name)
-        if sc is None:
-            return
-        if method == "PUT":
-            body = self._read_body_json()
-            color = body.get("color")
-            note  = body.get("note")
-            updated = sc.update_highlight(
-                book_id, highlight_id,
-                color=color if isinstance(color, str) else None,
-                note=note   if isinstance(note,   str) else None,
-            )
-            if updated is None:
-                self._send_error(404, "Highlight not found"); return
-            self._send_json(updated); return
-        if method == "DELETE":
-            if sc.delete_highlight(book_id, highlight_id):
-                self._send_status(204)
-            else:
-                self._send_error(404, "Highlight not found")
-            return
-        self._send_error(405, "Method not allowed")
-
-    # ------------------------------------------------------------------ #
     # Auth + require helpers
     # ------------------------------------------------------------------ #
 
@@ -2717,7 +2659,6 @@ VALID_THEMES = frozenset({
     "solarised-light", "solarised-dark", "oled-black", "high-contrast",
 })
 
-HIGHLIGHT_COLORS = ("yellow", "green", "blue", "pink")
 
 
 def sidecar_path_for(vault_path: str) -> str:
@@ -2878,72 +2819,6 @@ class Sidecar:
             per_book  = bookmarks.get(book_id, {})  # type: ignore[union-attr]
             for ch, items in list(per_book.items()):  # type: ignore[union-attr]
                 kept = [it for it in items if it.get("id") != bookmark_id]  # type: ignore[union-attr]
-                if len(kept) != len(items):
-                    if kept:
-                        per_book[ch] = kept  # type: ignore[index]
-                    else:
-                        del per_book[ch]  # type: ignore[arg-type]
-                    self._save_unlocked()
-                    return True
-            return False
-
-    def list_highlights(self, book_id: str, chapter: Optional[str] = None) -> List[Dict[str, object]]:
-        with self._lock:
-            highlights = self._data["highlights"]  # type: ignore[index]
-            per_book   = highlights.get(book_id, {})  # type: ignore[union-attr]
-            if chapter is None:
-                flat: List[Dict[str, object]] = []
-                for ch, items in per_book.items():  # type: ignore[union-attr]
-                    for it in items:  # type: ignore[union-attr]
-                        flat.append({**it, "chapter": ch})  # type: ignore[arg-type]
-                return flat
-            items = per_book.get(chapter, [])  # type: ignore[union-attr]
-            return [dict(it) for it in items]  # type: ignore[union-attr]
-
-    def add_highlight(self, book_id: str, chapter: str, start: int, end: int,
-                      color: str, note: str = "") -> Dict[str, object]:
-        if color not in HIGHLIGHT_COLORS:
-            color = "yellow"
-        start = max(0, int(start))
-        end   = max(start + 1, int(end))
-        with self._lock:
-            highlights = self._data["highlights"]  # type: ignore[index]
-            per_book   = highlights.setdefault(book_id, {})  # type: ignore[arg-type]
-            items      = per_book.setdefault(chapter, [])  # type: ignore[arg-type,union-attr]
-            entry: Dict[str, object] = {
-                "id":         "hl-" + uuid.uuid4().hex[:12],
-                "start":      start,
-                "end":        end,
-                "color":      color,
-                "note":       note[:2000],
-                "created_at": int(time.time()),
-            }
-            items.append(entry)  # type: ignore[union-attr]
-            self._save_unlocked()
-            return dict(entry)
-
-    def update_highlight(self, book_id: str, highlight_id: str,
-                         color: Optional[str] = None, note: Optional[str] = None) -> Optional[Dict[str, object]]:
-        with self._lock:
-            highlights = self._data["highlights"]  # type: ignore[index]
-            per_book   = highlights.get(book_id, {})  # type: ignore[union-attr]
-            for ch, items in per_book.items():  # type: ignore[union-attr]
-                for it in items:  # type: ignore[union-attr]
-                    if it.get("id") == highlight_id:  # type: ignore[union-attr]
-                        if color is not None and color in HIGHLIGHT_COLORS:
-                            it["color"] = color  # type: ignore[index]
-                        if note is not None:
-                            it["note"] = note[:2000]  # type: ignore[index]
-                        self._save_unlocked()
-                        return dict(it)  # type: ignore[arg-type]
-            return None
-
-    def delete_highlight(self, book_id: str, highlight_id: str) -> bool:
-        with self._lock:
-            highlights = self._data["highlights"]  # type: ignore[index]
-            per_book   = highlights.get(book_id, {})  # type: ignore[union-attr]
-            for ch, items in list(per_book.items()):  # type: ignore[union-attr]
-                kept = [it for it in items if it.get("id") != highlight_id]  # type: ignore[union-attr]
                 if len(kept) != len(items):
                     if kept:
                         per_book[ch] = kept  # type: ignore[index]
@@ -3206,19 +3081,6 @@ body.sidebar-right #sidebar.open { transform: translateX(0); }
   padding: 1.5em 0; font-style: italic;
 }
 
-/* Highlight styles */
-#content.reader mark {
-  background: var(--hl-yellow, rgba(255,235,59,0.5));
-  color: inherit; padding: 0.05em 0; border-radius: 2px;
-  cursor: pointer; transition: filter 0.1s;
-}
-#content.reader mark:hover { filter: brightness(0.9); }
-#content.reader mark[data-color="yellow"] { background: var(--hl-yellow); }
-#content.reader mark[data-color="green"]  { background: var(--hl-green);  }
-#content.reader mark[data-color="blue"]   { background: var(--hl-blue);   }
-#content.reader mark[data-color="pink"]   { background: var(--hl-pink);   }
-#content.reader mark.has-note { border-bottom: 1px dashed currentColor; }
-
 /* In-chapter search match */
 #content.reader .ic-match {
   background: rgba(255, 165, 0, 0.45); padding: 0 1px; border-radius: 2px;
@@ -3363,36 +3225,6 @@ body.sidebar-right #sidebar.open { transform: translateX(0); }
 .theme-swatch[data-theme="oled-black"]      .preview { background: #000000; border-color: #333; }
 .theme-swatch[data-theme="high-contrast"]   .preview { background: #fff; border-color: #000; }
 
-/* ─── Highlight popup (selection toolbar) ───────────────────────────── */
-.hl-popup {
-  position: absolute; background: var(--card); border: 1px solid var(--border);
-  border-radius: 8px; padding: 0.4rem; box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-  z-index: 200; display: flex; gap: 0.3rem; align-items: center;
-  font-size: 0.85rem;
-}
-.hl-popup button {
-  background: none; border: 1px solid var(--border); border-radius: 4px;
-  padding: 0.2rem 0.4rem; cursor: pointer; color: var(--text);
-  display: flex; align-items: center; gap: 0.2rem;
-}
-.hl-popup button:hover { background: var(--border); }
-.hl-swatch {
-  display: inline-block; width: 1.2em; height: 1.2em; border-radius: 50%;
-  border: 1px solid rgba(0,0,0,0.2);
-}
-.hl-swatch[data-color="yellow"] { background: var(--hl-yellow); }
-.hl-swatch[data-color="green"]  { background: var(--hl-green);  }
-.hl-swatch[data-color="blue"]   { background: var(--hl-blue);   }
-.hl-swatch[data-color="pink"]   { background: var(--hl-pink);   }
-
-/* ─── Note editor (modal) ───────────────────────────────────────────── */
-.note-editor textarea {
-  width: 100%; min-height: 80px; resize: vertical;
-  padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--bg); color: var(--text); font-family: inherit; font-size: 0.9rem;
-  box-sizing: border-box;
-}
-
 /* ─── In-chapter search bar ─────────────────────────────────────────── */
 .ic-search {
   position: sticky; top: 0; background: var(--card); border: 1px solid var(--border);
@@ -3486,7 +3318,6 @@ INDEX_JS = r"""(function() {
   // ──────────────────────────────────────────────────────────────── //
   //  Constants                                                       //
   // ──────────────────────────────────────────────────────────────── //
-  const HL_COLORS = ['yellow', 'green', 'blue', 'pink'];
   const FONT_FAMILIES = {
     system: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
     serif:  'Georgia, "Times New Roman", serif',
@@ -3508,7 +3339,6 @@ INDEX_JS = r"""(function() {
     vaults: [], vault: null, books: [], book: null,
     catalog: null, chapterIndex: 0,
     settings: null,
-    highlights: [],
     bookmarks: [],
     savePosTimer: null,
     currentChapter: null,
@@ -3772,184 +3602,6 @@ INDEX_JS = r"""(function() {
   }
 
   // ──────────────────────────────────────────────────────────────── //
-  //  Highlight manager                                                //
-  // ──────────────────────────────────────────────────────────────── //
-  const HL = {
-    load: async function(chapter) {
-      if (!state.vault || !state.book) return [];
-      try {
-        const list = await api('/api/vault/' + encodeURIComponent(state.vault) +
-                               '/book/' + encodeURIComponent(state.book) +
-                               '/highlights?chapter=' + encodeURIComponent(chapter));
-        return Array.isArray(list) ? list : [];
-      } catch (_) { return []; }
-    },
-    add: async function(chapter, start, end, color, note) {
-      return api('/api/vault/' + encodeURIComponent(state.vault) +
-                 '/book/' + encodeURIComponent(state.book) + '/highlights',
-                 { method: 'POST', body: { chapter, start, end, color, note: note || '' } });
-    },
-    remove: async function(id) {
-      return api('/api/vault/' + encodeURIComponent(state.vault) +
-                 '/book/' + encodeURIComponent(state.book) +
-                 '/highlights/' + encodeURIComponent(id), { method: 'DELETE' });
-    },
-    update: async function(id, patch) {
-      return api('/api/vault/' + encodeURIComponent(state.vault) +
-                 '/book/' + encodeURIComponent(state.book) +
-                 '/highlights/' + encodeURIComponent(id), { method: 'PUT', body: patch });
-    },
-    /**
-     * Walk text nodes in rootEl, find the char-offset range [start, end),
-     * and wrap the matching text in <mark>.
-     */
-    applyTo: function(rootEl, list) {
-      if (!rootEl) return;
-      // Wrap from end -> start so earlier offsets stay valid
-      const sorted = list.slice().sort((a, b) => b.start - a.start);
-      for (const h of sorted) this._wrapOne(rootEl, h.start, h.end, h);
-    },
-    _wrapOne: function(rootEl, start, end, h) {
-      const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, null);
-      const targets = [];
-      let pos = 0, node;
-      while ((node = walker.nextNode())) {
-        const len = node.nodeValue.length;
-        if (pos + len <= start) { pos += len; continue; }
-        if (pos >= end) break;
-        const s = Math.max(0, start - pos);
-        const e = Math.min(len, end - pos);
-        targets.push({ node, s, e });
-        pos += len;
-      }
-      for (let i = targets.length - 1; i >= 0; i--) {
-        const { node, s, e } = targets[i];
-        const middle = (s === 0) ? node : node.splitText(s);
-        if (e < (s === 0 ? node.nodeValue.length : middle.nodeValue.length)) {
-          middle.splitText(e - s);
-        }
-        const mark = document.createElement('mark');
-        mark.dataset.id    = h.id;
-        mark.dataset.color = h.color;
-        if (h.note) { mark.title = h.note; mark.classList.add('has-note'); }
-        middle.parentNode.insertBefore(mark, middle);
-        mark.appendChild(middle);
-      }
-    },
-    /**
-     * Given a selection inside rootEl, compute the char-offset range.
-     */
-    offsetsFor: function(sel, rootEl) {
-      if (!sel.rangeCount) return null;
-      const range = sel.getRangeAt(0);
-      if (!rootEl.contains(range.commonAncestorContainer)) return null;
-      const pre = document.createRange();
-      pre.selectNodeContents(rootEl);
-      pre.setEnd(range.startContainer, range.startOffset);
-      const start = pre.toString().length;
-      const text  = range.toString();
-      if (!text) return null;
-      return { start, end: start + text.length, text };
-    },
-  };
-
-  // ──────────────────────────────────────────────────────────────── //
-  //  Selection popup (highlight colour picker)                       //
-  // ──────────────────────────────────────────────────────────────── //
-  let popupEl = null;
-  function showSelectionPopup(x, y, range) {
-    hideSelectionPopup();
-    popupEl = el('div', { class: 'hl-popup', style: 'left:' + x + 'px;top:' + y + 'px;' });
-    HL_COLORS.forEach(c => {
-      popupEl.appendChild(el('button', {
-        title: 'Highlight ' + c,
-        onclick: (e) => { e.stopPropagation(); commitHighlight(c, range); },
-      }, el('span', { class: 'hl-swatch', 'data-color': c })));
-    });
-    popupEl.appendChild(el('button', {
-      title: 'Cancel',
-      onclick: (e) => { e.stopPropagation(); hideSelectionPopup(); },
-    }, '\u2715'));
-    document.body.appendChild(popupEl);
-  }
-  function hideSelectionPopup() { if (popupEl) { popupEl.remove(); popupEl = null; } }
-  async function commitHighlight(color, range) {
-    if (!state.currentChapter) { hideSelectionPopup(); return; }
-    const off = HL.offsetsFor(range, document.getElementById('reader-body'));
-    hideSelectionPopup();
-    if (!off) return;
-    try {
-      const h = await HL.add(state.currentChapter, off.start, off.end, color, '');
-      state.highlights.push(Object.assign({ chapter: state.currentChapter }, h));
-      HL.applyTo(document.getElementById('reader-body'), [h]);
-    } catch (err) { alert('Highlight failed: ' + err.message); }
-  }
-  function bindSelectionPopup() {
-    const reader = () => document.getElementById('reader-body');
-    document.addEventListener('mouseup', () => {
-      const sel = window.getSelection();
-      if (!sel || !sel.toString()) { hideSelectionPopup(); return; }
-      const r = reader(); if (!r) return;
-      const off = HL.offsetsFor(sel, r);
-      if (!off) { hideSelectionPopup(); return; }
-      const rect = sel.getRangeAt(0).getBoundingClientRect();
-      showSelectionPopup(rect.left + window.scrollX, rect.top + window.scrollY - 40, sel);
-    });
-    document.addEventListener('mousedown', (e) => {
-      if (popupEl && !popupEl.contains(e.target)) hideSelectionPopup();
-    });
-  }
-  function bindMarkClicks() {
-    document.addEventListener('click', (e) => {
-      const m = e.target.closest('mark[data-id]');
-      if (!m) return;
-      const id = m.dataset.id;
-      const h = state.highlights.find(x => x.id === id);
-      if (!h) return;
-      openHighlightEditor(h, m);
-    });
-  }
-  function openHighlightEditor(h, markEl) {
-    const ta = el('textarea', { placeholder: 'Note (optional)' });
-    ta.value = h.note || '';
-    const colorRow = el('div', { style: 'display:flex;gap:0.4rem;margin-bottom:0.5rem;' });
-    HL_COLORS.forEach(c => {
-      const sw = el('span', {
-        class: 'hl-swatch', 'data-color': c,
-        style: 'cursor:pointer;border:2px solid ' + (c === h.color ? 'var(--primary)' : 'transparent') + ';',
-        onclick: () => {
-          h.color = c; markEl.dataset.color = c;
-          colorRow.querySelectorAll('.hl-swatch').forEach(x => x.style.border = '2px solid transparent');
-          sw.style.border = '2px solid var(--primary)';
-        },
-      });
-      colorRow.appendChild(sw);
-    });
-    const save = el('button', {
-      onclick: async () => {
-        const updated = await HL.update(h.id, { color: h.color, note: ta.value });
-        h.note = updated.note; h.color = updated.color;
-        if (h.note) { markEl.title = h.note; markEl.classList.add('has-note'); }
-        else { markEl.removeAttribute('title'); markEl.classList.remove('has-note'); }
-        overlay.remove();
-      },
-    }, 'Save');
-    const del = el('button', {
-      style: 'background:#c44;color:white;border:0;padding:0.4rem 0.8rem;border-radius:6px;cursor:pointer;margin-right:auto;',
-      onclick: async () => {
-        await HL.remove(h.id);
-        markEl.replaceWith(...Array.from(markEl.childNodes));
-        state.highlights = state.highlights.filter(x => x.id !== h.id);
-        overlay.remove();
-      },
-    }, 'Delete');
-    const body = el('div', { class: 'note-editor' }, colorRow, ta,
-                    el('div', { style: 'display:flex;gap:0.5rem;margin-top:0.6rem;justify-content:space-between;' },
-                       del, save));
-    const overlay = modal('Edit highlight', body, null);
-  }
-
-  // ──────────────────────────────────────────────────────────────── //
   //  Bookmark manager                                                 //
   // ──────────────────────────────────────────────────────────────── //
   const BM = {
@@ -4084,7 +3736,7 @@ INDEX_JS = r"""(function() {
     document.querySelector('.topbar').classList.remove('hidden');
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      if (!document.querySelector('.modal-overlay, .zoom-modal, .hl-popup')) {
+      if (!document.querySelector('.modal-overlay, .zoom-modal')) {
         document.querySelector('.topbar').classList.add('hidden');
       }
     }, 3500);
@@ -4235,10 +3887,9 @@ INDEX_JS = r"""(function() {
       if (e.key === 'Escape') {
         if (inField) { e.target.blur(); return; }
         if (document.querySelector('.modal-overlay, .zoom-modal') ||
-            settingsModal || searchPanel || popupEl) {
+            settingsModal || searchPanel) {
           closeSettings(); closeInChapterSearch();
           document.querySelectorAll('.modal-overlay, .zoom-modal').forEach(m => m.remove());
-          hideSelectionPopup();
           return;
         }
         const sb = document.getElementById('sidebar');
@@ -4661,9 +4312,8 @@ INDEX_JS = r"""(function() {
       const body = el('div', { id: 'reader-body' });
       body.innerHTML = html;
       ct.appendChild(body);
-      const [hl, bm] = await Promise.all([HL.load(ch.file), BM.load(ch.file)]);
-      state.highlights = hl; state.bookmarks = bm;
-      HL.applyTo(body, hl);
+      const bm = await BM.load(ch.file);
+      state.bookmarks = bm;
       renderBookmarksInSidebar();
       if (typeof restoreScroll === 'number') ct.scrollTop = restoreScroll;
       else ct.scrollTop = 0;
@@ -4761,9 +4411,6 @@ INDEX_JS = r"""(function() {
     body.querySelectorAll('.chapter-sentinel').forEach(s => s.remove());
     body.appendChild(block);
     state.appendedIdx = idx;
-    // Apply highlights + update bookmarks for this chapter
-    const hl = await HL.load(ch.file);
-    HL.applyTo(block, hl);
     state.bookmarks = await BM.load(ch.file);
     renderBookmarksInSidebar();
     // NOTE: sentinel is installed by the CALLER (loadChapterInfinite
@@ -4881,7 +4528,7 @@ INDEX_JS = r"""(function() {
     buildShell();
     window.addEventListener('beforeunload', savePositionNow);
     bindKeyboard(); bindGestures();
-    bindSelectionPopup(); bindMarkClicks(); bindImageZoom();
+    bindImageZoom();
     bindIdleTimer();
     resetIdleTimer();
     try {
