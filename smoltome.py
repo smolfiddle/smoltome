@@ -3991,9 +3991,33 @@ INDEX_JS = r"""(function() {
   }
 
   // ──────────────────────────────────────────────────────────────── //
-  //  Position (debounced 1s save)                                    //
+  //  Position (debounced 1s save + localStorage sync)                //
   // ──────────────────────────────────────────────────────────────── //
+  function saveScrollLocal() {
+    if (!state.vault || !state.book || state.chapterIndex == null) return;
+    let chapter = state.chapterIndex, scroll = 0;
+    if (state.infiniteScroll) {
+      const info = activeChapterInfo();
+      chapter = info.idx; scroll = info.local;
+    } else {
+      scroll = document.getElementById('content').scrollTop;
+    }
+    try {
+      localStorage.setItem('smoltome_pos', JSON.stringify({
+        vault: state.vault, book: state.book, chapter: chapter, scroll: scroll
+      }));
+    } catch(_){}
+  }
+  function loadScrollLocal(bookId) {
+    try {
+      const d = JSON.parse(localStorage.getItem('smoltome_pos'));
+      if (d && d.vault === state.vault && d.book === bookId) return d;
+    } catch(_){}
+    return null;
+  }
   async function loadPosition(bookId) {
+    const local = loadScrollLocal(bookId);
+    if (local) return local;
     if (!state.vault) return null;
     try {
       return await api('/api/vault/' + encodeURIComponent(state.vault) +
@@ -4001,10 +4025,12 @@ INDEX_JS = r"""(function() {
     } catch (_) { return null; }
   }
   function savePositionDebounced() {
+    saveScrollLocal();
     clearTimeout(state.savePosTimer);
     state.savePosTimer = setTimeout(savePositionNow, 1000);
   }
   async function savePositionNow() {
+    saveScrollLocal();
     if (!state.vault || !state.book || state.chapterIndex == null) return;
     let chapter = state.chapterIndex, scroll = 0;
     if (state.infiniteScroll) {
