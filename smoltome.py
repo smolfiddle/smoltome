@@ -4114,7 +4114,7 @@ INDEX_JS = r"""(function() {
     const card = el('div', { class: 'end-book-card' },
       el('h2', null, 'End of book'),
       el('p', null, 'You have finished reading.'),
-      el('button', { onclick: () => { savePositionNow(); renderBookList(state.books); } }, 'Back to library')
+      el('button', { onclick: () => { savePositionNow(); clearReadingState(); renderBookList(state.books); } }, 'Back to library')
     );
     body.appendChild(card);
   }
@@ -4436,6 +4436,7 @@ INDEX_JS = r"""(function() {
 
   async function selectVault(name) {
     state.vault = name;
+    clearReadingState();
     state.settings = await loadSettings();
     applySettings(state.settings);
     document.getElementById('sidebar').classList.remove('open');
@@ -4572,6 +4573,7 @@ INDEX_JS = r"""(function() {
 
   async function openBook(bookId) {
     state.book = bookId;
+    saveReadingState(state.vault, bookId);
     const sb = document.getElementById('sidebar');
     sb.classList.remove('open');
     sb.style.transform = '';
@@ -4612,7 +4614,7 @@ INDEX_JS = r"""(function() {
       '<div class="bm-list"></div>' +
       '<button class="sidebar-pos-toggle" title="Toggle sidebar position">\u21c4 ' + (pos === 'left' ? 'Right' : 'Left') + '</button>';
     sb.querySelector('#back-to-books').addEventListener('click', () => {
-      savePositionNow(); renderBookList(state.books);
+      savePositionNow(); clearReadingState(); renderBookList(state.books);
     });
     sb.querySelectorAll('a[data-idx]').forEach(a => {
       a.addEventListener('click', () => {
@@ -4696,7 +4698,7 @@ INDEX_JS = r"""(function() {
         const endCard = el('div', { class: 'end-book-card' },
           el('h2', null, 'End of book'),
           el('p', null, 'You have finished reading.'),
-          el('button', { onclick: () => { savePositionNow(); renderBookList(state.books); } }, 'Back to library')
+      el('button', { onclick: () => { savePositionNow(); clearReadingState(); renderBookList(state.books); } }, 'Back to library')
         );
         ct.appendChild(endCard);
       }
@@ -4890,6 +4892,15 @@ INDEX_JS = r"""(function() {
   // ──────────────────────────────────────────────────────────────── //
   //  Boot                                                              //
   // ──────────────────────────────────────────────────────────────── //
+  function saveReadingState(vault, bookId) {
+    try { localStorage.setItem('smoltome_reading', JSON.stringify({vault: vault, book: bookId})); } catch(_){}
+  }
+  function loadReadingState() {
+    try { return JSON.parse(localStorage.getItem('smoltome_reading')); } catch(_){ return null; }
+  }
+  function clearReadingState() {
+    try { localStorage.removeItem('smoltome_reading'); } catch(_){}
+  }
   async function boot() {
     buildShell();
     bindKeyboard(); bindGestures();
@@ -4903,9 +4914,32 @@ INDEX_JS = r"""(function() {
         document.getElementById('content').innerHTML =
           '<p class="placeholder">No .vault files discovered in this directory.</p>';
       } else if (vaults.length === 1) {
-        await selectVault(vaults[0].name);
+        state.vault = vaults[0].name;
+        state.settings = await loadSettings();
+        applySettings(state.settings);
+        state.books = await api('/api/vault/' + encodeURIComponent(state.vault) + '/books');
+        const saved = loadReadingState();
+        if (saved && saved.vault === state.vault && state.books.some(b => b.book_id === saved.book)) {
+          await openBook(saved.book);
+        } else {
+          renderBookList(state.books);
+        }
       } else {
-        renderVaults();
+        const saved = loadReadingState();
+        const match = saved ? vaults.find(v => v.name === saved.vault) : null;
+        if (match) {
+          state.vault = match.name;
+          state.settings = await loadSettings();
+          applySettings(state.settings);
+          state.books = await api('/api/vault/' + encodeURIComponent(match.name) + '/books');
+          if (state.books.some(b => b.book_id === saved.book)) {
+            await openBook(saved.book);
+          } else {
+            renderBookList(state.books);
+          }
+        } else {
+          renderVaults();
+        }
       }
     } catch (err) {
       document.getElementById('content').innerHTML = '<p class="placeholder">' + err.message + '</p>';
