@@ -1143,13 +1143,16 @@ class VaultManager:
             self.conn_pool.put(conn)
 
         total = 0
-        for book_entry in books:
+        book_count = len(books)
+        for i, book_entry in enumerate(books, 1):
             book_id = book_entry.get("book_id")
             if not book_id:
                 continue
+            title = book_entry.get("title", book_id)
             catalog = load_book_catalog(self, book_id)
             if not catalog:
                 continue
+            book_total = 0
             for ch in catalog.get("chapters", []):
                 chapter_file = ch.get("file") if isinstance(ch, dict) else ch
                 if not chapter_file:
@@ -1165,8 +1168,13 @@ class VaultManager:
                     log.warning("  Search index failed for %s/%s: %s",
                                 book_id, chapter_file, exc)
                     continue
+                book_total += 1
                 total += 1
-        log.info("Rebuilt search index: %d chapters indexed.", total)
+            log.info("  [%d/%d] %s — %d chapter%s indexed",
+                     i, book_count, title,
+                     book_total, "s" if book_total != 1 else "")
+        log.info("Rebuilt search index: %d chapters indexed across %d book%s.",
+                 total, book_count, "s" if book_count != 1 else "")
 
     SEARCH_RESULT_LIMIT = 50
 
@@ -1998,11 +2006,13 @@ def process_epub(epub_path: str, mgr: VaultManager) -> Optional[Dict[str, object
     )
 
     return {
-        "book_id": book_id,
-        "title":   title,
-        "author":  author,
-        "cover":   cover,
-        "path":    catalog_path,
+        "book_id":       book_id,
+        "title":         title,
+        "author":        author,
+        "cover":         cover,
+        "path":          catalog_path,
+        "chapter_count": len(chapters),
+        "image_count":   len(images),
     }
 
 
@@ -2037,7 +2047,12 @@ def _extract_chapters(
             log.warning("  Failed to read '%s': %s", member, exc)
             continue
         markdown = convert_html(raw_html)
-        if not markdown.strip():
+        stripped = markdown.strip()
+        if not stripped:
+            continue
+        # Skip cover-like pages: image-only or near-empty content.
+        if len(stripped) < 200 and re.fullmatch(r'!\[.*?\]\(.*?\)', stripped):
+            log.debug("  Skipping cover-like page: %s", href)
             continue
         base_name = re.sub(r"[^A-Za-z0-9._-]+", "_",
                            os.path.splitext(os.path.basename(member))[0]) or f"chapter{index}"
@@ -2168,10 +2183,15 @@ class VaultRegistry:
         with self._lock:
             return self._managers.get(name)
 
-    def all(self) -> List[Tuple[str, str]]:
+    def all(self) -> List[Tuple[str, str, int]]:
+        """Return sorted list of (name, db_path, book_count) for all open vaults."""
         with self._lock:
-            entries = [(n, m.db_path) for n, m in self._managers.items()]
-        return sorted(entries, key=lambda x: x[0].lower())
+            result = []
+            for n, m in self._managers.items():
+                catalog = load_global_catalog(m)
+                count = len(catalog.get("books", [])) if catalog else 0
+                result.append((n, m.db_path, count))
+        return sorted(result, key=lambda x: x[0].lower())
 
 
 REGISTRY = VaultRegistry()
@@ -2314,7 +2334,7 @@ class ReaderHandler(BaseHTTPRequestHandler):
         if path == "/api/vaults":
             if method != "GET":
                 self._send_error(405, "Method not allowed"); return
-            self._send_json([{"name": n, "path": p} for n, p in REGISTRY.all()])
+            self._send_json([{"name": n, "path": p} for n, p, _ in REGISTRY.all()])
             return
 
         for pattern, name in ROUTES:
@@ -2374,7 +2394,19 @@ class ReaderHandler(BaseHTTPRequestHandler):
             return
         catalog = load_global_catalog(mgr) or {}
         books   = catalog.get("books", [])
+        sc = SIDECARS.for_vault(mgr.db_path)
+        positions = sc.get_all_positions()
         for book in books:
+            bid = book.get("book_id")
+            if not bid:
+                continue
+            chapter_count = book.get("chapter_count")
+            if chapter_count is None:
+                per_book = load_book_catalog(mgr, bid)
+                chapter_count = len(per_book.get("chapters", [])) if per_book else 0
+            pos = positions.get(bid, {})
+            chapter = pos.get("chapter", 0) if isinstance(pos, dict) else 0
+            book["progress"] = (chapter / chapter_count * 100.0) if chapter_count > 0 else 0
             book.setdefault("chapters", [])
         self._send_json(books)
 
@@ -2800,6 +2832,10 @@ class Sidecar:
             positions = self._data["positions"]  # type: ignore[index]
             return dict(positions.get(book_id, {}))  # type: ignore[union-attr]
 
+    def get_all_positions(self) -> Dict[str, Dict[str, object]]:
+        with self._lock:
+            return dict(self._data["positions"])  # type: ignore[index]
+
     def set_position(self, book_id: str, chapter: int, scroll: int) -> Dict[str, object]:
         with self._lock:
             positions = self._data["positions"]  # type: ignore[index]
@@ -3065,7 +3101,7 @@ body { display: flex; flex-direction: column; min-height: 100vh; transition: bac
   border-radius: 6px; padding: 0.3rem 0.55rem;
   color: var(--text); cursor: pointer; font-size: 1.1rem;
 }
-#sidebar-toggle { display: none; }
+#sidebar-toggle { margin-right: 0.3rem; }
 
 /* ─── Progress bar ──────────────────────────────────────────────────── */
 .progress-bar {
@@ -3087,12 +3123,13 @@ main { flex: 1; display: flex; min-height: 0; margin-top: 49px; }
   transform: translateX(calc(-100% - 8px));
   transition: transform 0.2s ease-out;
 }
-#sidebar:hover { transform: translateX(0); }
+#sidebar.open { transform: translateX(0); }
 body.sidebar-right #sidebar {
   left: auto; right: 8px;
   transform: translateX(calc(100% + 8px));
   box-shadow: -8px 0 30px rgba(0,0,0,0.25);
 }
+body.sidebar-right #sidebar.open { transform: translateX(0); }
 #sidebar h3 {
   font-size: 0.75rem; text-transform: uppercase;
   color: var(--muted); margin: 0.8rem 0.6rem 0.4rem;
@@ -3205,10 +3242,9 @@ body.sidebar-right #sidebar {
 #content .toolbar button:hover:not(:disabled) { background: var(--border); }
 #content .toolbar button:disabled { opacity: 0.3; cursor: not-allowed; }
 #content .toolbar button.active { background: var(--primary); color: white; }
-#content .toolbar .chapter-title { color: var(--muted); font-size: 0.85rem; flex: 1; text-align: center; }
-#content .toolbar .toolbar-right {
-  display: flex; gap: 0.5rem; align-items: center;
-  font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums;
+#content .toolbar #chapter-progress {
+  flex: 1; text-align: center; font-size: 0.8rem; color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ─── Book grid (Warm Brutalism) ────────────────────────────────────── */
@@ -3384,15 +3420,14 @@ body.sidebar-right #sidebar {
 
 /* ─── Mobile (≤ 720px) ─────────────────────────────────────────────── */
 @media (max-width: 720px) {
-  #sidebar-toggle, #open-settings { display: inline-block; }
+  #open-settings { display: inline-block; }
   .topbar h1 { font-size: 0.95rem; }
   .topbar #search { width: 170px; font-size: 0.88rem; }
   #sidebar { position: fixed; top: 49px; bottom: 0; left: 0; right: auto;
              border-radius: 0; transform: translateX(-100%); transition: transform 0.18s ease-out; }
-  #sidebar:hover { transform: translateX(0); }
-  body.sidebar-right #sidebar { left: auto; right: 0; transform: translateX(100%); }
-  body.sidebar-right #sidebar:hover { transform: translateX(0); }
   #sidebar.open { transform: translateX(0); box-shadow: 4px 0 12px rgba(0,0,0,0.4); }
+  body.sidebar-right #sidebar { left: auto; right: 0; transform: translateX(100%); }
+  body.sidebar-right #sidebar.open { transform: translateX(0); box-shadow: -4px 0 12px rgba(0,0,0,0.4); }
   #content { padding: 0.75rem; }
   #content.reader { padding: 0.5rem 0.75rem; }
   #content .toolbar { padding: 0.4rem; }
@@ -3939,11 +3974,13 @@ INDEX_JS = r"""(function() {
     },
   };
   async function quickBookmark() {
-    if (!state.currentChapter) return;
+    if (!state.currentChapter || !state.catalog || !state.catalog.chapters) return;
     const anchor = document.getElementById('content').scrollTop;
-    const label  = (state.catalog.chapters[state.chapterIndex].title) || ('Chapter ' + (state.chapterIndex + 1));
+    const idx = (state.infiniteScroll ? activeChapterInfo().idx : state.chapterIndex) || 0;
+    const chFile = state.catalog.chapters[idx].file;
+    const label  = (state.catalog.chapters[idx].title) || ('Chapter ' + (idx + 1));
     try {
-      const b = await BM.add(state.currentChapter, label, anchor);
+      const b = await BM.add(chFile, label, anchor);
       state.bookmarks.push(b);
       toast('Bookmark saved: ' + label);
     } catch (err) { alert('Bookmark failed: ' + err.message); }
@@ -4204,6 +4241,8 @@ INDEX_JS = r"""(function() {
           hideSelectionPopup();
           return;
         }
+        const sb = document.getElementById('sidebar');
+        if (sb && sb.classList.contains('open')) { sb.classList.remove('open'); return; }
         // Toggle zen mode
         document.body.classList.toggle('zen');
         return;
@@ -4307,7 +4346,7 @@ INDEX_JS = r"""(function() {
       // If not, do a fresh load of it (no appended preceding chapters).
       const ct = document.getElementById('content');
       const block = ct.querySelector('[data-chapter-idx="' + (cur - 1) + '"]');
-      if (block) ct.scrollTop = block.offsetTop;
+      if (block) { ct.scrollTop = block.offsetTop; state.chapterIndex = cur - 1; }
       else loadChapter(cur - 1);
     } else if (cur > 0) loadChapter(cur - 1);
   }
@@ -4332,12 +4371,13 @@ INDEX_JS = r"""(function() {
     const ct   = el('section', { id: 'content' });
     root.appendChild(sb); root.appendChild(ct);
     const toggle = document.getElementById('sidebar-toggle');
-    toggle.addEventListener('click', () => {
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
       sb.classList.toggle('open');
-      if (sb.classList.contains('open')) {
-        sb.style.transform = 'translateX(0)';
-      } else {
-        sb.style.transform = '';
+    });
+    document.addEventListener('click', (e) => {
+      if (sb.classList.contains('open') && !sb.contains(e.target) && e.target !== toggle) {
+        sb.classList.remove('open');
       }
     });
     document.getElementById('open-settings').addEventListener('click', openSettings);
@@ -4394,7 +4434,7 @@ INDEX_JS = r"""(function() {
       '<a data-id="' + escapeHtml(b.book_id) + '">' + escapeHtml(b.title) + '</a>'
     ).join('');
     sb.querySelectorAll('a[data-id]').forEach(a => {
-      a.addEventListener('click', () => { sb.classList.remove('open'); sb.style.transform = ''; openBook(a.dataset.id); });
+      a.addEventListener('click', () => { sb.classList.remove('open'); openBook(a.dataset.id); });
     });
     ct.className = '';
     if (books.length === 0) {
@@ -4433,7 +4473,7 @@ INDEX_JS = r"""(function() {
       '<a data-id="' + escapeHtml(b.book_id) + '">' + escapeHtml(b.title) + '</a>'
     ).join('');
     sb.querySelectorAll('a[data-id]').forEach(a => {
-      a.addEventListener('click', () => { sb.classList.remove('open'); sb.style.transform = ''; openBook(a.dataset.id); });
+      a.addEventListener('click', () => { sb.classList.remove('open'); openBook(a.dataset.id); });
     });
     ct.className = '';
 
@@ -4497,32 +4537,34 @@ INDEX_JS = r"""(function() {
         const bid = card.dataset.book;
         const chFile = card.dataset.chapter;
         if (!bid || !chFile) return;
-        await openBook(bid);
-        const idx = (state.catalog.chapters || []).findIndex(c => c.file === chFile);
-        if (idx >= 0) {
-          if (state.infiniteScroll) scrollToChapter(idx, 0);
-          else loadChapter(idx);
-        }
+        await openBook(bid, chFile);
       });
     });
   }
 
-  async function openBook(bookId) {
+  async function openBook(bookId, targetChapterFile) {
     state.book = bookId;
     saveReadingState(state.vault, bookId);
     const sb = document.getElementById('sidebar');
     sb.classList.remove('open');
-    sb.style.transform = '';
     try {
       state.catalog = await api('/api/vault/' + encodeURIComponent(state.vault) +
                                 '/book/' + encodeURIComponent(bookId) + '/catalog');
       document.getElementById('app-title').textContent = state.catalog.title || 'smoltome';
-      const pos = await loadPosition(bookId);
       renderReaderSidebar();
       if (state.catalog.chapters && state.catalog.chapters.length) {
-        const idx = (pos && Number.isInteger(pos.chapter) && pos.chapter < state.catalog.chapters.length)
-                    ? pos.chapter : 0;
-        loadChapter(idx, pos ? pos.scroll : 0);
+        let idx, scroll;
+        if (targetChapterFile) {
+          idx = (state.catalog.chapters || []).findIndex(c => c.file === targetChapterFile);
+          if (idx < 0) idx = 0;
+          scroll = 0;
+        } else {
+          const pos = await loadPosition(bookId);
+          idx = (pos && Number.isInteger(pos.chapter) && pos.chapter < state.catalog.chapters.length)
+                ? pos.chapter : 0;
+          scroll = pos ? pos.scroll : 0;
+        }
+        await loadChapter(idx, scroll);
       } else {
         const ct = document.getElementById('content');
         ct.className = 'reader';
@@ -4555,7 +4597,6 @@ INDEX_JS = r"""(function() {
     sb.querySelectorAll('a[data-idx]').forEach(a => {
       a.addEventListener('click', () => {
         sb.classList.remove('open');
-        sb.style.transform = '';
         loadChapter(parseInt(a.dataset.idx, 10));
       });
     });
@@ -4570,6 +4611,7 @@ INDEX_JS = r"""(function() {
     });
     highlightActiveChapter();
     markReadChapters();
+    renderBookmarksInSidebar();
   }
 
   function highlightActiveChapter() {
@@ -4603,6 +4645,7 @@ INDEX_JS = r"""(function() {
   async function loadChapterSingle(idx, restoreScroll) {
     state.chapterIndex = idx;
     highlightActiveChapter();
+    markReadChapters();
     const ch = state.catalog.chapters[idx];
     state.currentChapter = ch.file;
     const ct = document.getElementById('content');
@@ -4628,7 +4671,6 @@ INDEX_JS = r"""(function() {
       if (state.scrollListener) ct.removeEventListener('scroll', state.scrollListener);
       state.scrollListener = () => { savePositionDebounced(); updateProgressBar(); resetIdleTimer(); };
       ct.addEventListener('scroll', state.scrollListener);
-      window.addEventListener('beforeunload', savePositionNow);
       if (idx === state.catalog.chapters.length - 1) {
         const endCard = el('div', { class: 'end-book-card' },
           el('h2', null, 'End of book'),
@@ -4670,13 +4712,18 @@ INDEX_JS = r"""(function() {
           state.chapterIndex = info.idx;
           highlightActiveChapter();
           markReadChapters();
+          const prog = document.getElementById('chapter-progress');
+          if (prog) {
+            const chInf = state.catalog.chapters[state.chapterIndex];
+            const ttl = (chInf && chInf.title) || ('Chapter ' + (state.chapterIndex + 1));
+            prog.textContent = ttl + '  \u00b7  ' + (state.chapterIndex + 1) + '/' + state.catalog.chapters.length;
+          }
         }
         savePositionDebounced();
         updateProgressBar();
         resetIdleTimer();
       };
       ct.addEventListener('scroll', state.scrollListener);
-      window.addEventListener('beforeunload', savePositionNow);
     } catch (err) { ct.innerHTML = '<p class="placeholder">' + err.message + '</p>'; }
   }
   async function appendChapter(idx) {
@@ -4782,14 +4829,12 @@ INDEX_JS = r"""(function() {
     if (state.chapterIndex === 0) prev.disabled = true;
     const next = el('button', { onclick: () => nextChapter() }, '\u2192');
     if (state.chapterIndex === state.catalog.chapters.length - 1) next.disabled = true;
-    const title = el('span', { class: 'chapter-title' }, ch.title || ch.file);
-    const right = el('span', { class: 'toolbar-right' });
-    const progressTxt = el('span', null, 'Ch ' + (state.chapterIndex + 1) + ' / ' + state.catalog.chapters.length);
+    const title = ch.title || ('Chapter ' + (state.chapterIndex + 1));
+    const progressTxt = el('span', { id: 'chapter-progress' },
+      escapeHtml(title) + '  \u00b7  ' + (state.chapterIndex + 1) + '/' + state.catalog.chapters.length);
     const bmBtn = el('button', { onclick: quickBookmark, title: 'Bookmark' }, '\u2606');
-    right.appendChild(progressTxt);
-    right.appendChild(bmBtn);
     bar.appendChild(prev); bar.appendChild(next);
-    bar.appendChild(title); bar.appendChild(right);
+    bar.appendChild(progressTxt); bar.appendChild(bmBtn);
     return bar;
   }
   function renderBookmarksInSidebar() {
@@ -4834,6 +4879,7 @@ INDEX_JS = r"""(function() {
   }
   async function boot() {
     buildShell();
+    window.addEventListener('beforeunload', savePositionNow);
     bindKeyboard(); bindGestures();
     bindSelectionPopup(); bindMarkClicks(); bindImageZoom();
     bindIdleTimer();
@@ -4918,9 +4964,13 @@ def _vault_has_assets(mgr: VaultManager) -> bool:
     return bool(res and res[0] == "asset")
 
 
+BANNER = "smoltome v0.1.0"
+
+
 def cli_convert(argv: List[str]) -> int:
     args = _build_convert_parser().parse_args(argv)
     _configure_logging(verbose=args.verbose)
+    log.info(BANNER)
 
     vault_path = args.vault if args.vault.endswith(".vault") else args.vault + ".vault"
     target     = args.epub_dir or args.epub_file
@@ -4936,10 +4986,19 @@ def cli_convert(argv: List[str]) -> int:
             log.error("No EPUB files found in %s", target)
         return 1
 
+    log.info("Vault:      %s", vault_path)
+    log.info("Source:     %s (%d EPUB%s)", target, len(epubs), "s" if len(epubs) != 1 else "")
+    if args.password:
+        log.info("Password:   set")
+    log.info("Recursive:  %s", "yes" if args.recursive else "no")
+    log.info("")
+
     mgr = open_vault(vault_path, args.password)
     book_entries: List[Dict[str, object]] = []
+    total_chapters = 0
+    total_images   = 0
     try:
-        for epub in epubs:
+        for i, epub in enumerate(epubs, 1):
             try:
                 entry = process_epub(epub, mgr)
             except Exception as exc:
@@ -4947,6 +5006,14 @@ def cli_convert(argv: List[str]) -> int:
                 continue
             if entry is not None:
                 book_entries.append(entry)
+                ch = entry.get("chapter_count", 0)
+                im = entry.get("image_count", 0)
+                total_chapters += ch
+                total_images   += im
+                log.info("  [%d/%d] %s — %d chapter%s, %d image%s",
+                         i, len(epubs), entry["title"],
+                         ch, "s" if ch != 1 else "",
+                         im, "s" if im != 1 else "")
     finally:
         if book_entries:
             _write_merged_global_catalog(mgr, book_entries)
@@ -4959,23 +5026,26 @@ def cli_convert(argv: List[str]) -> int:
             except Exception as exc:
                 log.error("Search index rebuild failed: %s", exc)
         mgr.close()
-        _truncate_vault_trailing_zeros(vault_path)
+        vault_size = _truncate_vault_trailing_zeros(vault_path)
 
-    log.info("Done. %d book(s) added to %s", len(book_entries), vault_path)
+    log.info("")
+    log.info("Summary:")
+    log.info("  Books:     %d", len(book_entries))
+    log.info("  Chapters:  %d", total_chapters)
+    log.info("  Images:    %d", total_images)
+    if vault_size is not None:
+        log.info("  Vault:     %s", format_size(vault_size))
+    log.info("Done.")
     return 0
 
 
-def _truncate_vault_trailing_zeros(vault_path: str) -> None:
+def _truncate_vault_trailing_zeros(vault_path: str) -> Optional[int]:
     """Drop trailing zero pages from a SQLite-backed vault file.
 
-    SQLite's mmap'd writes can leave the file physically larger than the
-    logical page count. Reading is unaffected (WORM data is intact), but
-    the on-disk size is bigger than the actual content. We seek back from
-    EOF and find the last non-zero page, then truncate.
+    Returns the final file size in bytes, or None on error.
     """
     page_size = 4096
     try:
-        # Reopen briefly to learn the true page count.
         probe = sqlite3.connect(vault_path)
         page_count = probe.execute("PRAGMA page_count").fetchone()[0]
         probe.close()
@@ -4984,19 +5054,19 @@ def _truncate_vault_trailing_zeros(vault_path: str) -> None:
             f.seek(0, 2)
             current = f.tell()
             if current <= target_size:
-                return
-            # Read the tail to make sure it's all zeros before truncating.
+                return target_size
             f.seek(target_size)
             tail = f.read(current - target_size)
             if any(tail):
-                # Non-zero data in the trailing region — leave it alone.
-                return
+                return current
             f.truncate(target_size)
             log.info("Truncated %d trailing zero page(s) (%s -> %s).",
                      (current - target_size) // page_size,
                      format_size(current), format_size(target_size))
+            return target_size
     except Exception as exc:
         log.debug("trailing-zero truncation skipped: %s", exc)
+        return None
 
 
 def _build_convert_parser() -> argparse.ArgumentParser:
@@ -5026,6 +5096,7 @@ def _build_convert_parser() -> argparse.ArgumentParser:
 def cli_read(argv: List[str]) -> int:
     args = _build_read_parser().parse_args(argv)
     _configure_logging(verbose=args.verbose)
+    log.info(BANNER)
 
     root = os.getcwd()
     if args.vault:
@@ -5043,14 +5114,18 @@ def cli_read(argv: List[str]) -> int:
     if not discovered:
         log.error("No .vault files found. Pass --vault or place one in %s.", root)
         return 1
-    log.info("Serving %d vault(s) on http://%s:%d", len(discovered), args.host, args.port)
+    total_books = sum(count for _, _, count in discovered)
+    log.info("Vaults:     %d (%d book%s total)", len(discovered), total_books,
+             "s" if total_books != 1 else "")
+    log.info("Listening:  http://%s:%d", args.host, args.port)
 
     server = ThreadingReaderServer((args.host, args.port), ReaderHandler)
     if not args.no_browser:
         try:
             webbrowser.open(f"http://{args.host}:{args.port}/")
+            log.info("Browser:   opened")
         except Exception as exc:
-            log.warning("Could not open browser: %s", exc)
+            log.warning("Browser:   failed to open (%s)", exc)
 
     try:
         server.serve_forever()
@@ -5063,8 +5138,12 @@ def cli_read(argv: List[str]) -> int:
 
 def _open_vault(name: str, path: str) -> None:
     try:
-        REGISTRY.add(name, VaultManager(path))
-        log.info("Opened vault: %s", path)
+        mgr = VaultManager(path)
+        REGISTRY.add(name, mgr)
+        catalog = load_global_catalog(mgr)
+        book_count = len(catalog.get("books", [])) if catalog else 0
+        log.info("Opened:     %s (%d book%s)", path, book_count,
+                 "s" if book_count != 1 else "")
     except Exception as exc:
         log.error("Failed to open '%s': %s", path, exc)
 
@@ -5090,6 +5169,7 @@ def cli_index(argv: List[str]) -> int:
     """CLI entry point for ``smoltome.py index``."""
     args = _build_index_parser().parse_args(argv)
     _configure_logging(verbose=args.verbose)
+    log.info(BANNER)
 
     vault_path = args.vault if args.vault.endswith(".vault") else args.vault + ".vault"
     if not os.path.exists(vault_path):
