@@ -1,7 +1,7 @@
 # smoltome
 
-> **Single-file EPUB vault + web reader for Japanese light novels.**
-> Turn a folder of LN EPUBs into a deduplicated, compressed SQLite vault and binge-read in your browser—infinite scroll, highlights, bookmarks, 8 themes. Also works great with manga, web fiction, and any EPUB.
+> **Single-file EPUB vault + web reader for light novels.**
+> Turn a folder of EPUBs into a deduplicated, compressed SQLite vault and binge-read in your browser—infinite scroll, highlights, bookmarks, 8 themes. Works with any EPUB.
 
 ---
 
@@ -30,14 +30,14 @@
 
 ## Overview
 
-`smoltome.py` is a self-contained Python 3 script built for reading Japanese light novels:
+`smoltome.py` is a self-contained Python 3 script for reading light novels:
 
 1. **Ingests** EPUB files into a `.vault` archive—an SQLite-based, content-addressed storage layer with adaptive compression and deduplication.
 2. **Serves** those books over HTTP with a fully embedded single-page reader (HTML/CSS/JS baked into the Python file).
 
-Built specifically for LN collectors: handles cover art, inline illustrations, multi-volume series, and translated EPUBs that mix prose with images. The extraction pipeline preserves chapter spine order, cover position, and embedded illustrations exactly as they appear in the source file. CJK search tokenization works out of the box.
+Handles cover art, inline illustrations, multi-volume series, and EPUBs that mix prose with images. The extraction pipeline preserves chapter spine order, cover position, and embedded illustrations as they appear in the source file. CJK search tokenization works out of the box.
 
-Also works with manga, web fiction, textbooks, or any standard EPUB. No external dependencies. Requires Python 3.6+.
+No external dependencies. Requires Python 3.6+.
 
 ---
 
@@ -59,16 +59,16 @@ Also works with manga, web fiction, textbooks, or any standard EPUB. No external
 
 - **Zero-dependency HTTP server** (`ThreadingHTTPServer`) with connection pooling and WAL-tuned SQLite.
 - **8 built-in themes**: default-light, default-dark, sepia, paper, solarised-light, solarised-dark, oled-black, high-contrast.
-- **Infinite scroll** for binge-reading multi-volume series—chapters append as you scroll, no page breaks.
+- **Infinite scroll** for binge-reading a full volume—chapters append as you scroll, no page breaks.
 - **Text highlights** in 4 colors with optional notes.
 - **Per-chapter bookmarks** with one-click save.
 - **Reading position** auto-persisted (chapter index + scroll offset).
-- **Progress bar** and live reading-time estimation.
+- **Progress bar** tracking chapter completion.
 - **In-chapter search** with regex-safe highlighting and prev/next navigation.
 - **Image zoom** modal for inline illustrations and maps.
-- **Zen mode** (auto-hiding chrome) and click-to-turn page regions.
+- **Zen mode** (auto-hiding chrome).
 - **Mobile swipe gestures** (chapter navigation + pull-down settings).
-- **Sidebar** with chapter list, read-state indicators, and bookmark list.
+- **Sidebar** with chapter list, read-state indicators, and bookmark list. Opens via hamburger button in the topbar; closes on click outside or Esc.
 
 ---
 
